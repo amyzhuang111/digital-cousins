@@ -2,9 +2,12 @@ import { readFileSync } from "node:fs";
 import { eulerToQuat, rotationDeltaDeg } from "../lib/math";
 import {
   DEFAULT_THRESHOLDS,
+  SPIKE_THRESHOLD_LABEL,
+  TELEPORT_THRESHOLD_LABEL,
   checkTrajectory,
   parseTrajectory,
   reportToCsv,
+  reportToJson,
 } from "../lib/trajectory";
 
 function assert(cond: unknown, message: string): asserts cond {
@@ -94,6 +97,87 @@ assert(dup.rows[1].errors.some((error) => error.startsWith("Duplicate frame")), 
 assert(dupReport.invalidRows.length === 1 && dupReport.steps.length === 0, "duplicate is reported and not a step");
 const dupAgain = checkTrajectory(dup, DEFAULT_THRESHOLDS);
 assert(dupAgain.summary.validRows === 1, "a second check still keeps the earliest row");
+
+const exported = JSON.parse(reportToJson(report)) as {
+  thresholds: Record<string, number>;
+};
+assert(exported.thresholds[TELEPORT_THRESHOLD_LABEL] === DEFAULT_THRESHOLDS.teleportMeters, "export teleport label value");
+assert(exported.thresholds[SPIKE_THRESHOLD_LABEL] === DEFAULT_THRESHOLDS.rotationSpikeDegrees, "export spike label value");
+assert(!Object.prototype.hasOwnProperty.call(exported.thresholds, "teleportMeters"), "export does not say teleportMeters");
+assert(reportToJson(report).includes(`"${TELEPORT_THRESHOLD_LABEL}"`), "export label string");
+assert(report.thresholds.teleportMeters === 0.25, "threshold value unchanged");
+
+const crlf = parseTrajectory(sampleText.replace(/\n/g, "\r\n"), "sample-crlf.csv");
+const crlfFlags = checkTrajectory(crlf, DEFAULT_THRESHOLDS).flags.map((flag) => `${flag.kind}:${flag.frame}`).sort();
+assert(crlfFlags.join(",") === "missing_frame:4,rotation_spike:9,teleport:7", `crlf flags ${crlfFlags.join(",")}`);
+
+const quotedText = readFileSync("scripts/fixtures/quoted-multiline.csv", "utf8");
+const quoted = parseTrajectory(quotedText, "quoted-multiline.csv");
+assert(quoted.rows.length === 3, `quoted multiline kept ${quoted.rows.length} rows`);
+assert(quoted.preamble.length === 1 && quoted.preamble[0].includes("Quoted multiline"), "quoted preamble ignores embedded hash");
+assert(quoted.rows[0].line === 3 && quoted.rows[1].line === 5 && quoted.rows[2].line === 7, "multiline row numbers are the start line");
+const quotedId = "cam\n# not a comment";
+assert(quoted.rows[0].objectId === quotedId && quoted.rows[1].objectId === quotedId, "newline stays inside the object id");
+assert(quoted.rows[0].errors.length === 0 && quoted.rows[0].pose !== null, "first multiline row is valid");
+assert(quoted.rows[2].pose === null && quoted.rows[2].errors.some((error) => error.includes("Position")), "bad quoted position is flagged");
+const quotedReport = checkTrajectory(quoted, DEFAULT_THRESHOLDS);
+assert(quotedReport.invalidRows.length === 1 && quotedReport.invalidRows[0].line === 7, "bad multiline row listed at its start line");
+assert(quotedReport.invalidRows[0].frame === 2, "bad multiline frame kept");
+assert(quotedReport.summary.validRows + quotedReport.summary.invalidRows === quotedReport.summary.dataRows, "quoted rows are not dropped");
+assert(quotedReport.flags.length === 0, "invalid multiline frame is not also a missing frame");
+assert(quotedReport.steps.length === 1, "path uses the two valid multiline rows");
+
+const commaText = readFileSync("scripts/fixtures/embedded-comma.csv", "utf8").replace(/\n/g, "\r\n");
+const commaDoc = parseTrajectory(commaText, "embedded-comma.csv");
+assert(commaDoc.rows.length === 3, `embedded comma kept ${commaDoc.rows.length} rows`);
+assert(commaDoc.rows.every((row) => row.objectId === "alpha,beta"), "comma stays inside the object id");
+assert(commaDoc.rows[1].line === 3 && commaDoc.rows[1].pose === null, "bad quoted number stays one row");
+const commaReport = checkTrajectory(commaDoc, DEFAULT_THRESHOLDS);
+assert(commaReport.invalidRows.length === 1 && commaReport.invalidRows[0].line === 3, "embedded comma bad row listed");
+assert(commaReport.summary.dataRows === 3 && commaReport.summary.validRows === 2, "embedded comma drops nothing");
+assert(commaReport.flags.length === 0 && commaReport.steps.length === 1, "invalid comma row is off the path");
+
+const TOTAL = 4000;
+const BAD_FRAME = 10;
+const MISSING_FRAME = 20;
+const TELEPORT_FRAME = 30;
+const SPIKE_FRAME = 40;
+const largeLines = ["frame,timestamp,x,y,z,roll,pitch,yaw,object_id"];
+let x = 0;
+let yaw = 0;
+for (let frame = 0; frame < TOTAL; frame++) {
+  if (frame === MISSING_FRAME) continue;
+  if (frame === BAD_FRAME) {
+    largeLines.push(`${frame},${frame},bad,0,0,0,0,0,"unit,A"`);
+    continue;
+  }
+  if (frame === TELEPORT_FRAME) x += 1;
+  else x += 0.05;
+  if (frame === SPIKE_FRAME) yaw += 90;
+  else yaw += 1;
+  largeLines.push(`${frame},${frame},${x},0,0,0,0,${yaw},"unit,A"`);
+}
+const large = parseTrajectory(largeLines.join("\r\n") + "\r\n", "large.csv");
+assert(large.rows.length === TOTAL - 1, `large row count ${large.rows.length}`);
+assert(large.rows.every((row) => row.objectId === "unit,A"), "large file object ids survived embedded commas");
+const largeReport = checkTrajectory(large, DEFAULT_THRESHOLDS);
+assert(largeReport.summary.dataRows === large.rows.length, "large summary counts every row");
+assert(largeReport.summary.validRows + largeReport.summary.invalidRows === largeReport.summary.dataRows, "large file drops nothing");
+assert(largeReport.invalidRows.length === 1, "large file lists the one bad row");
+assert(largeReport.invalidRows[0].frame === BAD_FRAME && largeReport.invalidRows[0].line === BAD_FRAME + 2, "large bad row number");
+const largeFlags = largeReport.flags.map((flag) => `${flag.kind}:${flag.frame}`).sort();
+assert(
+  largeFlags.join(",") === `missing_frame:${MISSING_FRAME},rotation_spike:${SPIKE_FRAME},teleport:${TELEPORT_FRAME}`,
+  `large flags ${largeFlags.join(",")}`,
+);
+const largeTeleport = largeReport.flags.find((flag) => flag.kind === "teleport");
+const largeSpike = largeReport.flags.find((flag) => flag.kind === "rotation_spike");
+assert(largeTeleport && largeSpike, "large planted flags");
+close(largeTeleport.positionDelta ?? NaN, 1, "large teleport distance");
+close(largeTeleport.rotationDeltaDeg ?? NaN, 1, "large teleport rotation");
+close(largeSpike.rotationDeltaDeg ?? NaN, 90, "large spike");
+close(largeSpike.positionDelta ?? NaN, 0.05, "large spike translation");
+assert(largeReport.steps.length === largeReport.summary.validRows - 1, "large steps follow the valid chain");
 
 console.log(
   JSON.stringify(

@@ -1,0 +1,4 @@
+frame,timestamp,x,y,z,roll,pitch,yaw,object_id
+0,0,0,0,0,0,0,0,"alpha,beta"
+1,1,"1,5",0,0,0,0,0,"alpha,beta"
+2,2,0.1,0,0,0,0,1,"alpha,beta"

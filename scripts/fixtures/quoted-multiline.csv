@@ -1,0 +1,9 @@
+# Quoted multiline fixture. Not a capture.
+frame,timestamp,x,y,z,roll,pitch,yaw,object_id
+0,0.0,0,0,0,0,0,0,"cam
+# not a comment"
+1,1.0,0.05,0,0,0,0,1,"cam
+# not a comment"
+2,2.0,"nope
+x",0,0,0,0,2,"cam
+# not a comment"

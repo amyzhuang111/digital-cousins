@@ -14,6 +14,11 @@ export const SAMPLE_LABEL =
 export const DEFAULT_TELEPORT_M = 0.25;
 export const DEFAULT_SPIKE_DEG = 20;
 
+/** JSON export key. Same words as the checker control. */
+export const TELEPORT_THRESHOLD_LABEL = "Teleport, file units";
+/** JSON export key. Same words as the checker control. */
+export const SPIKE_THRESHOLD_LABEL = "Rotation spike, degrees";
+
 export const STORAGE_KEY = "pose-trajectory-tool-v1";
 
 export type Thresholds = {
@@ -142,34 +147,111 @@ function canonicalHeader(name: string): string | null {
   return HEADER_ALIASES[key] ?? null;
 }
 
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (quoted) {
-      if (c === '"') {
-        if (line[i + 1] === '"') {
-          cur += '"';
+type CsvRecord = {
+  line: number;
+  cells: string[];
+  unclosed: boolean;
+};
+
+function parseCsvDocument(text: string): { preamble: string[]; records: CsvRecord[] } {
+  const src = text.replace(/^\uFEFF/, "");
+  const preamble: string[] = [];
+  const records: CsvRecord[] = [];
+  let i = 0;
+  let line = 1;
+
+  const consumeBreak = () => {
+    if (src[i] === "\r") {
+      i += 1;
+      if (src[i] === "\n") i += 1;
+      line += 1;
+      return;
+    }
+    if (src[i] === "\n") {
+      i += 1;
+      line += 1;
+    }
+  };
+
+  const skipCommentsAndBlanks = () => {
+    while (i < src.length) {
+      let j = i;
+      while (src[j] === " " || src[j] === "\t") j += 1;
+      if (j >= src.length) {
+        i = j;
+        return;
+      }
+      if (src[j] === "\n" || src[j] === "\r") {
+        i = j;
+        consumeBreak();
+        continue;
+      }
+      if (src[j] === "#") {
+        const start = j;
+        while (j < src.length && src[j] !== "\n" && src[j] !== "\r") j += 1;
+        preamble.push(src.slice(start, j).trim().replace(/^#\s?/, ""));
+        i = j;
+        consumeBreak();
+        continue;
+      }
+      return;
+    }
+  };
+
+  while (i < src.length) {
+    skipCommentsAndBlanks();
+    if (i >= src.length) break;
+    const recordLine = line;
+    const cells: string[] = [];
+    let field = "";
+    let quoted = false;
+    let closedRecord = false;
+    while (i < src.length) {
+      const c = src[i];
+      if (quoted) {
+        if (c === '"') {
+          if (src[i + 1] === '"') {
+            field += '"';
+            i += 2;
+          } else {
+            quoted = false;
+            i += 1;
+          }
+        } else if (c === "\n" || c === "\r") {
+          field += "\n";
+          consumeBreak();
+        } else {
+          field += c;
+          i += 1;
+        }
+      } else if (c === '"') {
+        if (field.trim() === "") {
+          field = "";
+          quoted = true;
           i += 1;
         } else {
-          quoted = false;
+          field += c;
+          i += 1;
         }
+      } else if (c === ",") {
+        cells.push(field.trim());
+        field = "";
+        i += 1;
+      } else if (c === "\n" || c === "\r") {
+        cells.push(field.trim());
+        consumeBreak();
+        closedRecord = true;
+        break;
       } else {
-        cur += c;
+        field += c;
+        i += 1;
       }
-    } else if (c === '"') {
-      quoted = true;
-    } else if (c === ",") {
-      out.push(cur.trim());
-      cur = "";
-    } else {
-      cur += c;
     }
+    if (!closedRecord) cells.push(field.trim());
+    records.push({ line: recordLine, cells, unclosed: quoted });
   }
-  out.push(cur.trim());
-  return out;
+
+  return { preamble, records };
 }
 
 function finiteOrNull(value: unknown): number | null {
@@ -288,31 +370,24 @@ function rowFromRecord(
 }
 
 function recordsFromCsv(text: string): { preamble: string[]; rows: TrajectoryRow[] } {
-  const preamble: string[] = [];
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const { preamble, records } = parseCsvDocument(text);
   let header: string[] | null = null;
   const rows: TrajectoryRow[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const trimmed = raw.trim();
-    if (trimmed === "") continue;
-    if (trimmed.startsWith("#")) {
-      preamble.push(trimmed.replace(/^#\s?/, ""));
-      continue;
-    }
-    const cells = splitCsvLine(raw);
+  for (const csvRecord of records) {
     if (!header) {
-      header = cells.map((name) => canonicalHeader(name) ?? "");
+      header = csvRecord.cells.map((name) => canonicalHeader(name) ?? "");
       const known = header.filter(Boolean);
-      if (!known.includes("frame") || !known.includes("x")) {
+      if (!known.includes("frame") || !known.includes("x") || csvRecord.unclosed) {
         rows.push({
-          line: i + 1,
+          line: csvRecord.line,
           frame: null,
           timestamp: null,
           objectId: "object",
           pose: null,
           errors: [
-            "Header must include frame and position columns. See the template for euler or quaternion names.",
+            csvRecord.unclosed
+              ? "Unclosed quote. This row was kept and left out of the path."
+              : "Header must include frame and position columns. See the template for euler or quaternion names.",
           ],
           warnings: [],
         });
@@ -322,9 +397,14 @@ function recordsFromCsv(text: string): { preamble: string[]; rows: TrajectoryRow
     }
     const record: Record<string, string> = {};
     header.forEach((key, index) => {
-      if (key) record[key] = cells[index] ?? "";
+      if (key) record[key] = csvRecord.cells[index] ?? "";
     });
-    rows.push(rowFromRecord(record, i + 1));
+    const row = rowFromRecord(record, csvRecord.line);
+    if (csvRecord.unclosed) {
+      row.errors.push("Unclosed quote. This row was kept and left out of the path.");
+      row.pose = null;
+    }
+    rows.push(row);
   }
   if (!header && rows.length === 0) {
     rows.push({
@@ -560,7 +640,14 @@ export function checkTrajectory(
 }
 
 export function reportToJson(report: CheckerReport): string {
-  return JSON.stringify(report, null, 2);
+  const exported = {
+    ...report,
+    thresholds: {
+      [TELEPORT_THRESHOLD_LABEL]: report.thresholds.teleportMeters,
+      [SPIKE_THRESHOLD_LABEL]: report.thresholds.rotationSpikeDegrees,
+    },
+  };
+  return JSON.stringify(exported, null, 2);
 }
 
 function csvEscape(value: string): string {

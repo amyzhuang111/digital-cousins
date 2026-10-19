@@ -12,7 +12,9 @@ import { buildTrajectoryScene } from "@/lib/trajectory-scene";
 import {
   DEFAULT_THRESHOLDS,
   SAMPLE_LABEL,
+  SPIKE_THRESHOLD_LABEL,
   STORAGE_KEY,
+  TELEPORT_THRESHOLD_LABEL,
   TOOL_LABEL,
   chainForObject,
   checkTrajectory,
@@ -549,7 +551,7 @@ export function TrajectoryBench() {
 
               <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <label className="rounded-lg bg-[#0e110f] p-3 ring-1 ring-white/10">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-[#8f887c]">Teleport, file units</span>
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-[#8f887c]">{TELEPORT_THRESHOLD_LABEL}</span>
                   <Input
                     className="mt-2"
                     type="number"
@@ -565,7 +567,7 @@ export function TrajectoryBench() {
                   />
                 </label>
                 <label className="rounded-lg bg-[#0e110f] p-3 ring-1 ring-white/10">
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-[#8f887c]">Rotation spike, degrees</span>
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-[#8f887c]">{SPIKE_THRESHOLD_LABEL}</span>
                   <Input
                     className="mt-2"
                     type="number"
