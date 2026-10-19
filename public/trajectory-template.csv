@@ -1,0 +1,7 @@
+# Template for a pose trajectory exported from COLMAP, ARKit, Blender, or motion capture.
+# Euler columns: frame,timestamp,x,y,z,roll,pitch,yaw,object_id
+# Quaternion columns: frame,timestamp,x,y,z,qw,qx,qy,qz,object_id
+# Euler angles are degrees. Order used for the rotation delta: yaw about Y, then pitch about X, then roll about Z.
+# Delete these comment lines and replace the example row. This template is not a capture.
+frame,timestamp,x,y,z,roll,pitch,yaw,object_id
+0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,cam0

@@ -1,0 +1,16 @@
+{
+  "note": "Template for a pose trajectory export. Replace the rows. This file is not a capture. Euler angles are degrees: yaw about Y, then pitch about X, then roll about Z. Quaternion alternative fields are qw, qx, qy, qz.",
+  "rows": [
+    {
+      "frame": 0,
+      "timestamp": 0.0,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "roll": 0.0,
+      "pitch": 0.0,
+      "yaw": 0.0,
+      "object_id": "cam0"
+    }
+  ]
+}
